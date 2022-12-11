@@ -1,3 +1,11 @@
+pub mod model;
+
+use crate::model::Model;
+
 fn main() {
-    println!("Hello, world!");
+    let mut m = Model::new(0);
+    while !m.collapse() {
+        println!("Entry");
+        m.print();
+    }
 }
