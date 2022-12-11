@@ -31,7 +31,8 @@ impl Model {
         //
         self.entropies[i] = 0.0;
 
-        self.propagate(i)
+        // self.propagate(i)
+        self.check()
     }
 
     fn observe(&self, i: usize) -> (Wave, f32) {
@@ -62,26 +63,24 @@ impl Model {
     }
 
     fn check(&self) -> bool {
-        true
+        self.entropies.iter().sum::<f32>() > 0.0
     }
 
     fn find_node(&self) -> Option<usize> {
         let mut imin: usize = 0;
-        let mut min: f32 = self.entropies[0];
-        let mut found = false;
+        let mut min: f32 = f32::INFINITY;
 
         for (i, &e) in self.entropies.iter().enumerate() {
             if e > 0.0 && e < min {
-                found = true;
                 imin = i;
                 min = e;
             }
         }                
-       
-        if found {
-            Some(imin)
-        } else {
+
+        if min == f32::INFINITY {
             None
+        } else {
+            Some(imin)
         }
     }
 
@@ -90,7 +89,7 @@ impl Model {
         let xs: Vec<usize> = (0..self.dimensions.x).collect();
         for j in &ys {
             for i in &xs {
-                print!("{}", self.entropies[i + j*self.dimensions.x]);
+                print!("{} ", self.entropies[i + j*self.dimensions.x]);
             }
             println!("");
         }
