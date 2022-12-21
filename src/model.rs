@@ -1,41 +1,49 @@
+use std::ops::{AddAssign, Mul};
+
+use rand::Rng;
+
+#[derive(Copy)]
+pub struct Color(pub u16, pub u16, pub u16);
+
 pub struct Model {
     waves: Vec<Wave>,
     entropies: Vec<f32>,
-    dimensions: Dimension
-}
-
-struct Dimension {
+    base_states: Vec<Color>,
+    valid_neighbors: Vec<Vec<bool>>,
     x: usize,
     y: usize
 }
 
 impl Model {
-    pub fn new(size: usize) -> Model {
+    pub fn new(base_states: Vec<Color>, neighbors: Vec<Vec<bool>>, x: usize, y: usize) -> Model {
+        let waves = Wave::vec(base_states.len(), x*y);
+        let entropies = calculate_entropies(&waves);
         Model {
-            waves: Vec::with_capacity(size),
-            entropies: vec![0.8, 0.3, 0.6, 0.23, 0.67, 0.90, 0.54, 0.12, 0.54, 0.65, 0.90, 0.58, 0.14, 0.65, 0.89, 0.36],
-            dimensions: Dimension { x: 4, y: 4 }
+            waves,
+            entropies,
+            base_states,
+            valid_neighbors: neighbors,
+            x,
+            y
         }
     }
 
-    pub fn collapse(&mut self) -> bool {
+    pub fn collapse(&mut self) -> Option<usize> {
         let node = self.find_node();
         let i = match node {
             Some(i) => i,
-            None => return self.check(),
+            None => return None,
         };
 
-        // let (wave, entropy) = self.observe(i);
-        // self.waves[i] = wave;
-        // self.entropies[i] = entropy;
-        //
-        self.entropies[i] = 0.0;
+        let (wave, state_i, entropy) = self.observe(i);
+        self.waves[i] = wave;
+        self.entropies[i] = entropy;
 
-        // self.propagate(i)
-        self.check()
+        self.propagate(i, state_i);
+        Some(i)
     }
 
-    fn observe(&self, i: usize) -> (Wave, f32) {
+    fn observe(&self, i: usize) -> (Wave, usize, f32) {
         let wave = &self.waves[i];
 
         let mut max_p = wave.c[0];
@@ -52,14 +60,42 @@ impl Model {
         };
 
         ret_wave.c[max_i] = 1.0;
-        (ret_wave, 0.0)
+        (ret_wave, max_i, 0.0)
     }
 
-    fn propagate(&mut self, i: usize) -> bool {
-        let row = i % self.dimensions.x;
-        let column = (i - row) / self.dimensions.x;
+    fn propagate(&mut self, i: usize, state_i: usize) {
+        let row = i % self.x;
+        let column = (i - row) / self.x;
+        let row = row as isize;
+        let column = column as isize;
+        
+        let dys = match column {
+            0 => vec![0isize, 1],
+            _ if column == (self.y-1) as isize => vec![-1isize, 0],
+            _ => vec![-1isize, 0, 1]
+        };
+        let dxs = match row {
+            0 => vec![0isize, 1],
+            _ if row == (self.x-1) as isize => vec![-1isize, 0],
+            _ => vec![-1isize, 0, 1]
+        };
 
-        false
+        for dy in &dys {
+            for dx in &dxs {
+                let nj = row + dx + (column + dy) * self.x as isize;
+                let nj = nj as usize;
+                assert!(nj < self.waves.len(), "nj too big {}. From {},{} and ds {},{}", nj, row, column, dx, dy);
+                let wave = &mut self.waves[nj];
+                for neighbor in 0..self.base_states.len() {
+                    if !self.valid_neighbors[state_i][neighbor] {
+                        wave.c[neighbor] = 0.0;
+                    }
+                }
+                
+                self.waves[nj] = normalize(&self.waves[nj]);
+                self.entropies[nj] = calculate_entropy(&self.waves[nj]);
+            }
+        }
     }
 
     fn check(&self) -> bool {
@@ -84,15 +120,19 @@ impl Model {
         }
     }
 
-    pub fn print(&self) {
-        let ys: Vec<usize> = (0..self.dimensions.y).collect();
-        let xs: Vec<usize> = (0..self.dimensions.x).collect();
-        for j in &ys {
-            for i in &xs {
-                print!("{} ", self.entropies[i + j*self.dimensions.x]);
-            }
-            println!("");
+    fn valid_neighbor(&self, state: usize, neighbor_state: usize) -> bool {
+        self.valid_neighbors[state][neighbor_state]
+    }
+
+    pub fn print(&self, i: usize) -> String {
+        let wave = &self.waves[i];
+        let mut color = Color(0, 0, 0);
+
+        for j in 0..self.base_states.len() {
+            color += self.base_states[j] * wave.c[j];
         }
+
+        format!("{} {} {}", color.0, color.1, color.2)
     }
 
 }
@@ -101,7 +141,20 @@ struct Wave {
     c: Vec<f32>
 }
 
-fn normalize(wave: Wave) -> Wave {
+impl Wave {
+    fn new(dimensions: usize) -> Wave {
+        let mut rng = rand::thread_rng();
+        let c = (0..dimensions).map(|_| rng.gen_range(0.0, 1.0)).collect(); 
+        Wave { c }
+    }
+
+    fn vec(dimensions: usize, size: usize) -> Vec<Wave> {
+        (0..size).map(|_| Wave::new(dimensions)).collect()
+    }
+        
+}
+
+fn normalize(wave: &Wave) -> Wave {
     let modulus: f32 = wave.c
         .iter()
         .sum();
@@ -112,5 +165,57 @@ fn normalize(wave: Wave) -> Wave {
             .iter()
             .map(|x| x * inv_mod)
             .collect()
+    }
+}
+
+fn calculate_entropies(waves: &Vec<Wave>) -> Vec<f32> {
+    let mut e: Vec<f32> = Vec::with_capacity(waves.len());
+    for w in waves.iter() {
+        let mut cmax = w.c[0];
+        for wc in w.c.iter() {
+            if wc > &cmax {
+                cmax = *wc;
+            }
+        }
+        e.push(1.0-cmax);
+    }
+    e
+}
+
+fn calculate_entropy(wave: &Wave) -> f32 {
+    let mut cmax = wave.c[0];
+    for c in wave.c.iter() {
+        if c > &cmax {
+            cmax = *c;
+        }
+    }
+    1.0-cmax
+}
+
+impl AddAssign for Color {
+    fn add_assign(&mut self, rhs: Self) {
+        self.0 += rhs.0;
+        self.1 += rhs.1;
+        self.2 += rhs.2;
+    }
+}
+
+impl Mul<f32> for Color {
+    type Output = Self;
+
+    fn mul(self, rhs: f32) -> Self::Output {
+        let r = self.0 as f32;
+        let g = self.1 as f32;
+        let b = self.2 as f32;
+        let r = (r * rhs) as u16;
+        let g = (g * rhs) as u16;
+        let b = (b * rhs) as u16;
+        Color(r, g, b)        
+    }
+}
+
+impl Clone for Color {
+    fn clone(&self) -> Self {
+        Self(self.0, self.1, self.2)
     }
 }
